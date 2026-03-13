@@ -8,9 +8,9 @@
 **South Africa's boldest e-commerce platform.**  
 Launch your online store, accept payments, and ship nationwide — all from one place.
 
-[![Website](https://img.shields.io/badge/🌐_Website-shopeazy.co.za-101935?style=for-the-badge)](https://www.shopeazy.co.za)
+[![Website](https://img.shields.io/badge/🌐_Website-shopeazy.co-101935?style=for-the-badge)](https://www.shopeazy.co)
 [![Platform](https://img.shields.io/badge/Platform-Next.js_/_TypeScript-FF5275?style=for-the-badge&logo=next.js&logoColor=white)](https://github.com/shopeazy/shopeazy-website-final)
-[![Made in SA](https://img.shields.io/badge/Made_in-🇿🇦_South_Africa-FFA62B?style=for-the-badge)](https://www.shopeazy.co.za/about)
+[![Made in SA](https://img.shields.io/badge/Made_in-🇿🇦_South_Africa-FFA62B?style=for-the-badge)](https://www.shopeazy.co/about)
 
 </div>
 
@@ -71,9 +71,9 @@ We welcome contributions from the community! Here's how to get involved:
 
 ShopEazy is fully compliant with South African data protection law.
 
-- [Privacy Policy](https://www.shopeazy.co.za/privacy)
-- [Terms of Service](https://www.shopeazy.co.za/terms)
-- [POPIA Compliance](https://www.shopeazy.co.za/popia)
+- [Privacy Policy](https://www.shopeazy.co/privacy)
+- [Terms of Service](https://www.shopeazy.co/terms)
+- [POPIA Compliance](https://www.shopeazy.co/popia)
 
 ---
 
@@ -81,6 +81,6 @@ ShopEazy is fully compliant with South African data protection law.
 
 **Built with ❤️ in South Africa 🇿🇦**
 
-[Website](https://www.shopeazy.co.za) · [Platform](https://www.shopeazy.co.za/platform) · [Pricing](https://www.shopeazy.co.za/pricing) · [About](https://www.shopeazy.co.za/about)
+[Website](https://www.shopeazy.co) · [Platform](https://www.shopeazy.co/platform) · [Pricing](https://www.shopeazy.co/pricing) · [About](https://www.shopeazy.co/about)
 
 </div>
