@@ -1,0 +1,122 @@
+# Reusable security checks for every ShopEazy repo.
+#
+#   secrets   gitleaks over the commits this PR (or push) adds. A repo can
+#             allow-list false positives in its own `.gitleaks.toml`.
+#   deps      fails a PR that ADDS a high or critical production-dependency
+#             vulnerability (npm audit on the PR's lockfile vs the base's).
+#             GitHub's dependency-review-action needs Advanced Security on
+#             private repos, which the Free plan doesn't have; this is the
+#             same gate built on `npm audit`.
+#
+#   jobs:
+#     security:
+#       uses: shopeazy/.github/.github/workflows/security.yml@main
+name: Security
+
+on:
+  workflow_call:
+    inputs:
+      lockfile-dir:
+        description: Folder holding package-lock.json ('' = repo root; 'none' skips the dependency check).
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Scan new commits
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
+            RANGE="-1 $HEAD"
+          else
+            RANGE="$BASE..$HEAD"
+          fi
+          echo "Scanning $RANGE"
+          gitleaks git --log-opts="--no-merges $RANGE" --redact --verbose --exit-code 1 .
+
+  deps:
+    name: New vulnerable dependencies
+    if: github.event_name == 'pull_request' && inputs.lockfile-dir != 'none'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Audit PR lockfile against base
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          DIR: ${{ inputs.lockfile-dir }}
+          # .npmrc files that reference ${NPM_TOKEN} must still parse; audit
+          # only talks to the public advisory endpoint.
+          NPM_TOKEN: unused
+        run: |
+          set -euo pipefail
+          dir="${DIR:-.}"
+          prefix="${DIR:+$DIR/}"
+          if ! git cat-file -e "$BASE:${prefix}package-lock.json" 2>/dev/null; then
+            echo "No package-lock.json on the base branch; nothing to compare." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          mkdir -p /tmp/base
+          git show "$BASE:${prefix}package.json" > /tmp/base/package.json
+          git show "$BASE:${prefix}package-lock.json" > /tmp/base/package-lock.json
+          [ -f "$dir/.npmrc" ] && cp "$dir/.npmrc" /tmp/base/.npmrc || true
+          (cd /tmp/base && npm audit --package-lock-only --omit=dev --json > /tmp/base.json || true)
+          (cd "$dir" && npm audit --package-lock-only --omit=dev --json > /tmp/head.json || true)
+          node - <<'EOF'
+          const fs = require('fs');
+          const read = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return {}; } };
+          const serious = (r) => {
+            const out = new Map();
+            for (const [name, v] of Object.entries(r.vulnerabilities ?? {})) {
+              for (const via of v.via ?? []) {
+                if (typeof via !== 'object') continue;
+                if (via.severity !== 'high' && via.severity !== 'critical') continue;
+                out.set(`${via.source}`, { name, severity: via.severity, title: via.title, url: via.url, range: via.range });
+              }
+            }
+            return out;
+          };
+          const head = read('/tmp/head.json');
+          if (head.error) { console.log('npm audit failed:', JSON.stringify(head.error)); process.exit(1); }
+          const before = serious(read('/tmp/base.json'));
+          const after = serious(head);
+          const added = [...after].filter(([id]) => !before.has(id)).map(([, v]) => v);
+          const summary = fs.createWriteStream(process.env.GITHUB_STEP_SUMMARY, { flags: 'a' });
+          if (!added.length) {
+            const msg = `No new high/critical production vulnerabilities (${after.size} already on the base branch).`;
+            console.log(msg); summary.write(msg + '\n');
+            process.exit(0);
+          }
+          const lines = added.map((a) => `- **${a.severity}** \`${a.name}\` ${a.range ?? ''}: ${a.title} (${a.url})`);
+          const msg = `This PR adds ${added.length} high/critical production vulnerabilit${added.length === 1 ? 'y' : 'ies'}:\n${lines.join('\n')}\n\nUpgrade or replace the package, or run \`npm audit fix\`.`;
+          console.log(msg); summary.write(msg + '\n');
+          process.exit(1);
+          EOF
