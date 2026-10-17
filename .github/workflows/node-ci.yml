@@ -1,0 +1,178 @@
+# Reusable PR checks for every ShopEazy Node repo: install (cached), lint,
+# typecheck, unit tests and a production build.
+#
+# Called by a thin `.github/workflows/ci.yml` in each repo:
+#
+#   jobs:
+#     ci:
+#       uses: shopeazy/.github/.github/workflows/node-ci.yml@main
+#       with:
+#         sibling-repo: shopeazy-storefronts   # optional
+#       secrets: inherit
+#
+# Every step is a shell command passed as an input; an empty string skips it.
+#
+# The repo is checked out into a folder named after itself (shopeazy-console/,
+# not the workspace root) so the shared-contract tests find the sibling repo at
+# `../shopeazy-storefronts`, exactly as on a laptop. The sibling is the branch
+# with the same name as this PR's branch when one exists (paired PRs compare
+# against each other), otherwise its `main`.
+name: Node CI
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        default: '22'
+      lint:
+        type: string
+        default: npm run lint
+      typecheck:
+        type: string
+        default: npx tsc --noEmit
+      test:
+        type: string
+        default: npm test
+      build:
+        type: string
+        default: npm run build
+      build-env:
+        description: Extra NAME=value lines exported for the build (non-secret, e.g. NEXT_PUBLIC_* placeholders).
+        type: string
+        default: ''
+      sibling-repo:
+        description: Repo in the shopeazy org whose files the contract tests compare against (checked out beside this one).
+        type: string
+        default: ''
+      github-packages:
+        description: Install @shopeazy/* packages from GitHub Packages.
+        type: boolean
+        default: false
+    secrets:
+      SIBLING_DEPLOY_KEY:
+        description: Read-only deploy key on the sibling repo (private key).
+        required: false
+      PACKAGES_TOKEN:
+        description: Token that can read @shopeazy packages; falls back to GITHUB_TOKEN.
+        required: false
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  REPO_DIR: ${{ github.event.repository.name }}
+  NEXT_TELEMETRY_DISABLED: '1'
+  # Private repos get 2-core / 7 GB runners; give Node most of it.
+  NODE_OPTIONS: --max-old-space-size=6144
+
+jobs:
+  verify:
+    name: Lint · types · unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ${{ github.event.repository.name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: ${{ github.event.repository.name }}
+
+      - name: Check out sibling (same branch)
+        id: sibling-branch
+        if: inputs.sibling-repo != '' && github.head_ref != ''
+        continue-on-error: true
+        uses: actions/checkout@v7
+        with:
+          repository: shopeazy/${{ inputs.sibling-repo }}
+          ref: ${{ github.head_ref }}
+          path: ${{ inputs.sibling-repo }}
+          ssh-key: ${{ secrets.SIBLING_DEPLOY_KEY }}
+          persist-credentials: false
+
+      - name: Check out sibling (main)
+        if: inputs.sibling-repo != '' && steps.sibling-branch.outcome != 'success'
+        uses: actions/checkout@v7
+        with:
+          repository: shopeazy/${{ inputs.sibling-repo }}
+          ref: main
+          path: ${{ inputs.sibling-repo }}
+          ssh-key: ${{ secrets.SIBLING_DEPLOY_KEY }}
+          persist-credentials: false
+
+      - name: Which sibling
+        if: inputs.sibling-repo != ''
+        working-directory: ${{ inputs.sibling-repo }}
+        run: echo "Contract tests compare against ${{ inputs.sibling-repo }}@$(git rev-parse --abbrev-ref HEAD) ($(git rev-parse --short HEAD))" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ github.event.repository.name }}/package-lock.json
+          registry-url: ${{ inputs.github-packages && 'https://npm.pkg.github.com' || '' }}
+          scope: ${{ inputs.github-packages && '@shopeazy' || '' }}
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PACKAGES_TOKEN || github.token }}
+          NPM_TOKEN: ${{ secrets.PACKAGES_TOKEN || github.token }}
+
+      - name: Lint
+        if: inputs.lint != ''
+        run: ${{ inputs.lint }}
+
+      - name: Typecheck
+        if: inputs.typecheck != '' && !cancelled()
+        run: ${{ inputs.typecheck }}
+
+      - name: Unit tests
+        if: inputs.test != '' && !cancelled()
+        run: ${{ inputs.test }}
+
+  build:
+    name: Build
+    if: inputs.build != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ${{ github.event.repository.name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: ${{ github.event.repository.name }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ github.event.repository.name }}/package-lock.json
+          registry-url: ${{ inputs.github-packages && 'https://npm.pkg.github.com' || '' }}
+          scope: ${{ inputs.github-packages && '@shopeazy' || '' }}
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PACKAGES_TOKEN || github.token }}
+          NPM_TOKEN: ${{ secrets.PACKAGES_TOKEN || github.token }}
+
+      - name: Build cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.event.repository.name }}/.next/cache
+          key: next-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', github.event.repository.name)) }}-${{ github.sha }}
+          restore-keys: next-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', github.event.repository.name)) }}-
+
+      - name: Build
+        env:
+          BUILD_ENV: ${{ inputs.build-env }}
+          NPM_TOKEN: ${{ secrets.PACKAGES_TOKEN || github.token }}
+        run: |
+          set -a
+          eval "$BUILD_ENV"
+          set +a
+          ${{ inputs.build }}
