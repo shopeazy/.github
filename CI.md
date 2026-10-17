@@ -15,7 +15,7 @@ Each repo has a thin `.github/workflows/ci.yml` that calls these with `@main`, p
 
 | Secret | Where | Why |
 |---|---|---|
-| `SIBLING_DEPLOY_KEY` | console, storefronts (Actions **and** Dependabot secrets) | read-only deploy key on the other repo, for the contract tests |
+| `SIBLING_DEPLOY_KEY` or `SIBLING_TOKEN` | console, storefronts (Actions **and** Dependabot secrets) | read the other repo for the contract tests. Deploy keys are disabled in the org settings today, so this is a fine-grained PAT (Contents: read on console + storefronts) until they are allowed. Without one the contract tests skip with a warning. |
 | `staging` environment | console | e2e: every key from the console `.env.local` that points at shopeazy-staging (synced by `scripts/ci/sync-staging-secrets.sh` in the console) |
 
 ## Limits on the Free plan
