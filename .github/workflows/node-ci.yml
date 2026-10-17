@@ -16,7 +16,13 @@
 # not the workspace root) so the shared-contract tests find the sibling repo at
 # `../shopeazy-storefronts`, exactly as on a laptop. The sibling is the branch
 # with the same name as this PR's branch when one exists (paired PRs compare
-# against each other), otherwise its `main`.
+# against each other), otherwise the PR's base branch (`main`, or `staging`
+# once that branch exists), otherwise `main`.
+#
+# Reading a private sibling needs a credential: SIBLING_DEPLOY_KEY (read-only
+# deploy key; deploy keys must be allowed in the org settings) or SIBLING_TOKEN
+# (fine-grained PAT, Contents: read on both repos). With neither, the contract
+# tests skip and the run summary says so in a warning.
 name: Node CI
 
 on:
@@ -53,6 +59,9 @@ on:
       SIBLING_DEPLOY_KEY:
         description: Read-only deploy key on the sibling repo (private key).
         required: false
+      SIBLING_TOKEN:
+        description: Fine-grained token with Contents read on the sibling repo (used when there is no deploy key).
+        required: false
       PACKAGES_TOKEN:
         description: Token that can read @shopeazy packages; falls back to GITHUB_TOKEN.
         required: false
@@ -80,9 +89,25 @@ jobs:
         with:
           path: ${{ github.event.repository.name }}
 
+      - name: Sibling access
+        id: access
+        if: inputs.sibling-repo != ''
+        env:
+          HAS_KEY: ${{ secrets.SIBLING_DEPLOY_KEY != '' }}
+          HAS_TOKEN: ${{ secrets.SIBLING_TOKEN != '' }}
+        run: |
+          if [ "$HAS_KEY" = true ] || [ "$HAS_TOKEN" = true ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            msg="No SIBLING_DEPLOY_KEY or SIBLING_TOKEN secret: the byte-for-byte contract tests against ${{ inputs.sibling-repo }} were SKIPPED."
+            echo "::warning::$msg"
+            echo "⚠️ $msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Check out sibling (same branch)
         id: sibling-branch
-        if: inputs.sibling-repo != '' && github.head_ref != ''
+        if: steps.access.outputs.ok == 'true' && github.head_ref != ''
         continue-on-error: true
         uses: actions/checkout@v7
         with:
@@ -90,20 +115,35 @@ jobs:
           ref: ${{ github.head_ref }}
           path: ${{ inputs.sibling-repo }}
           ssh-key: ${{ secrets.SIBLING_DEPLOY_KEY }}
+          token: ${{ secrets.SIBLING_DEPLOY_KEY == '' && secrets.SIBLING_TOKEN || github.token }}
+          persist-credentials: false
+
+      - name: Check out sibling (base branch)
+        id: sibling-base
+        if: steps.access.outputs.ok == 'true' && steps.sibling-branch.outcome != 'success' && github.base_ref != '' && github.base_ref != 'main'
+        continue-on-error: true
+        uses: actions/checkout@v7
+        with:
+          repository: shopeazy/${{ inputs.sibling-repo }}
+          ref: ${{ github.base_ref }}
+          path: ${{ inputs.sibling-repo }}
+          ssh-key: ${{ secrets.SIBLING_DEPLOY_KEY }}
+          token: ${{ secrets.SIBLING_DEPLOY_KEY == '' && secrets.SIBLING_TOKEN || github.token }}
           persist-credentials: false
 
       - name: Check out sibling (main)
-        if: inputs.sibling-repo != '' && steps.sibling-branch.outcome != 'success'
+        if: steps.access.outputs.ok == 'true' && steps.sibling-branch.outcome != 'success' && steps.sibling-base.outcome != 'success'
         uses: actions/checkout@v7
         with:
           repository: shopeazy/${{ inputs.sibling-repo }}
           ref: main
           path: ${{ inputs.sibling-repo }}
           ssh-key: ${{ secrets.SIBLING_DEPLOY_KEY }}
+          token: ${{ secrets.SIBLING_DEPLOY_KEY == '' && secrets.SIBLING_TOKEN || github.token }}
           persist-credentials: false
 
       - name: Which sibling
-        if: inputs.sibling-repo != ''
+        if: steps.access.outputs.ok == 'true'
         working-directory: ${{ inputs.sibling-repo }}
         run: echo "Contract tests compare against ${{ inputs.sibling-repo }}@$(git rev-parse --abbrev-ref HEAD) ($(git rev-parse --short HEAD))" | tee -a "$GITHUB_STEP_SUMMARY"
 
