@@ -24,3 +24,7 @@ Each repo has a thin `.github/workflows/ci.yml` that calls these with `@main`, p
 - Organisation secrets are not visible to private repos on Free, so secrets are set per repo.
 - Private repos get 2,000 Actions minutes a month and 2-core / 7 GB runners.
 - `actions/dependency-review-action` needs Advanced Security on private repos, so `security.yml` uses `npm audit` instead.
+
+## Required checks
+
+`scripts/rulesets.sh` puts the ruleset "main: PR + CI" on every repo's default branch: changes arrive by PR, the CI checks (plus `e2e passed` on console) must pass, no force-push or deletion; repo admins may override only when merging a PR. Needs GitHub Team (rulesets on private repos 403 on Free). Re-run it after adding a repo or renaming a check.
