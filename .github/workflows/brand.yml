@@ -1,0 +1,53 @@
+# Reusable ShopEazy brand check. Reads only the lines a PR adds and flags what breaks the
+# brand (shopeazy-brand: BRAND.md, VOICE.md): the name, "Submit"/"Click here", emoji in the
+# product, raw hex colours instead of tokens, and missing repo docs
+# (PRODUCT.md, DESIGN.md, AGENTS.md, CLAUDE.md).
+#
+# Called from each repo's ci.yml:
+#
+#   jobs:
+#     brand:
+#       uses: shopeazy/.github/.github/workflows/brand.yml@main
+#       with:
+#         surface: product   # marketing | product | api | tooling
+#
+# Warn-only until 2026-10-25, then `mode: block`. A PR labelled `brand-override` always passes.
+name: Brand check
+
+on:
+  workflow_call:
+    inputs:
+      surface:
+        type: string
+        default: product
+      mode:
+        type: string
+        default: warn
+
+jobs:
+  brand:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: shopeazy/.github
+          path: .brand-tools
+          sparse-checkout: scripts/brand-check.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Brand check
+        env:
+          OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'brand-override') }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          mode='${{ inputs.mode }}'
+          [ "$OVERRIDE" = "true" ] && mode=warn
+          base="${BASE:-origin/main}"
+          [ "$base" = "0000000000000000000000000000000000000000" ] && base=origin/main
+          node .brand-tools/scripts/brand-check.mjs --base "$base" --surface '${{ inputs.surface }}' --mode "$mode"

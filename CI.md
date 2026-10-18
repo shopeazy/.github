@@ -22,6 +22,7 @@ feature branch ──PR──▶ staging ──Promote──▶ main
 |---|---|
 | `.github/workflows/node-ci.yml` | `npm ci` (cached), lint, typecheck, unit tests, production build. Every step is an input; `''` skips it. Optional `sibling-repo` checks out the sibling repo beside this one for the byte-for-byte contract tests (same-named branch if it exists, else `main`). |
 | `.github/workflows/promote.yml` | Promote staging → production: checks the commit is on `staging`, `main` can fast-forward to it and every check on it is green; waits on the `promote` environment (approval); moves `main`; waits for Vercel's production deploy; smoke URL; Vercel rollback on failure (needs `VERCEL_TOKEN`). |
+| `.github/workflows/brand.yml` | The brand check (`scripts/brand-check.mjs`) on the lines a PR adds: the name ShopEazy, "Submit"/"Click here", emoji in the product, raw hex instead of tokens, and missing PRODUCT/DESIGN/AGENTS/CLAUDE.md. Input `surface` (marketing, product, api, tooling) and `mode` (warn, block). The `brand-override` label always passes. |
 | `.github/workflows/security.yml` | gitleaks over the commits a PR/push adds; fails a PR that adds a high/critical production vulnerability (`npm audit` on the PR lockfile vs the base). |
 
 Each repo has a thin `.github/workflows/ci.yml` that calls these with `@main`, plus `.github/dependabot.yml`.
