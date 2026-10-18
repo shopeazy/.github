@@ -1,0 +1,216 @@
+# Promote a commit that passed staging to production.
+#
+# Branch model (every ShopEazy repo): PRs merge into `staging`, which deploys to
+# the staging environment. `main` is production and only this workflow moves it,
+# by fast-forwarding it to a commit already on `staging`. Nothing is rebuilt
+# from a different tree: production builds the exact commit staging ran.
+#
+# Called by a thin `.github/workflows/promote.yml` in each repo:
+#
+#   on:
+#     workflow_dispatch:
+#       inputs:
+#         sha: { description: 'Commit on staging (blank = staging tip)', default: '' }
+#   jobs:
+#     promote:
+#       uses: shopeazy/.github/.github/workflows/promote.yml@main
+#       with:
+#         sha: ${{ inputs.sha }}
+#         smoke-url: https://app.shopeazy.co/auth   # blank for repos with no deploy
+#         vercel-project: shopeazy-console
+#       secrets: inherit
+#
+# Steps:
+#   check    the commit is on staging, main can fast-forward to it, and every
+#            check on it finished green (CI on the staging push, Vercel staging).
+#   promote  waits on the `promote` environment (Eamon's approval once
+#            required reviewers are set), then moves main.
+#   verify   (when smoke-url is set) waits for Vercel's production deployment of
+#            that commit, then requests smoke-url. A failure rolls production
+#            back to the previous deployment when VERCEL_TOKEN is available.
+name: Promote
+
+on:
+  workflow_call:
+    inputs:
+      sha:
+        description: Commit on staging to promote. Blank = the tip of staging.
+        type: string
+        default: ''
+      smoke-url:
+        description: Production URL that must answer 2xx/3xx after the deploy. Blank = no deploy to wait for.
+        type: string
+        default: ''
+      vercel-project:
+        description: Vercel project name, for the automatic rollback.
+        type: string
+        default: ''
+      deploy-timeout-minutes:
+        type: number
+        default: 20
+    secrets:
+      VERCEL_TOKEN:
+        required: false
+      VERCEL_ORG_ID:
+        required: false
+
+permissions:
+  contents: write
+  checks: read
+  statuses: read
+  deployments: read
+
+concurrency:
+  group: promote-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Ready to promote?
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.pick.outputs.sha }}
+      from: ${{ steps.pick.outputs.from }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Pick the commit
+        id: pick
+        run: |
+          set -euo pipefail
+          tip=$(gh api "repos/$REPO/commits/staging" --jq .sha)
+          sha="${{ inputs.sha }}"
+          [ -z "$sha" ] && sha="$tip"
+          sha=$(gh api "repos/$REPO/commits/$sha" --jq .sha)
+          # The commit must be on staging (the tip or behind it).
+          on_staging=$(gh api "repos/$REPO/compare/$sha...$tip" --jq .status)
+          case "$on_staging" in identical|ahead) ;; *) echo "::error::$sha is not on staging ($on_staging)"; exit 1;; esac
+          # main must be able to fast-forward to it.
+          from=$(gh api "repos/$REPO/commits/main" --jq .sha)
+          ff=$(gh api "repos/$REPO/compare/$from...$sha" --jq .status)
+          case "$ff" in
+            ahead) ;;
+            identical) echo "::notice::main is already at $sha. Nothing to promote."; ;;
+            *) echo "::error::main has commits that are not on staging ($ff). Merge main into staging first."; exit 1;;
+          esac
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "from=$from" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Promote \`${sha:0:7}\` to production"
+            echo
+            echo "| | |"; echo "|---|---|"
+            echo "| main now | \`${from:0:7}\` |"
+            echo "| staging tip | \`${tip:0:7}\` |"
+            echo
+            echo "**Commits going out:**"
+            echo
+            gh api "repos/$REPO/compare/$from...$sha" --jq '.commits[] | "- `\(.sha[0:7])` \(.commit.message | split("\n")[0])"' | tail -50
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Every check on it is green
+        env:
+          SHA: ${{ steps.pick.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # Check runs (Actions jobs, Vercel). This promote run itself is excluded.
+          runs=$(gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" --paginate \
+            --jq '.check_runs[] | select(.name | test("^(promote|Ready to promote|Promote|Production)") | not) | "\(.status)|\(.conclusion)|\(.name)"')
+          statuses=$(gh api "repos/$REPO/commits/$SHA/status" --jq '.statuses[] | "\(.state)|\(.context)"')
+          echo "$runs"; echo "$statuses"
+          bad=0
+          while IFS='|' read -r status conclusion name; do
+            [ -z "$name" ] && continue
+            if [ "$status" != completed ]; then echo "::error::still running: $name"; bad=1
+            elif ! echo "$conclusion" | grep -qE '^(success|skipped|neutral)$'; then echo "::error::$name: $conclusion"; bad=1; fi
+          done <<< "$runs"
+          while IFS='|' read -r state context; do
+            [ -z "$context" ] && continue
+            case "$state" in success) ;; pending) echo "::error::still running: $context"; bad=1;; *) echo "::error::$context: $state"; bad=1;; esac
+          done <<< "$statuses"
+          if [ -z "$runs$statuses" ]; then echo "::error::no checks have run on this commit yet"; bad=1; fi
+          exit $bad
+
+  promote:
+    name: Move main
+    needs: check
+    runs-on: ubuntu-latest
+    environment: promote
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ needs.check.outputs.sha }}
+    steps:
+      - name: Fast-forward main
+        run: |
+          set -euo pipefail
+          # force=false: GitHub refuses anything that is not a fast-forward.
+          gh api -X PATCH "repos/$REPO/git/refs/heads/main" -f sha="$SHA" -F force=false --jq '"main → \(.object.sha[0:7])"'
+          echo "main → \`${SHA:0:7}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    name: Production smoke
+    needs: [check, promote]
+    if: inputs.smoke-url != ''
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ needs.check.outputs.sha }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+    steps:
+      - name: Wait for Vercel's production deploy
+        id: deploy
+        run: |
+          set -euo pipefail
+          deadline=$(( $(date +%s) + ${{ inputs.deploy-timeout-minutes }} * 60 ))
+          while :; do
+            dep=$(gh api "repos/$REPO/deployments?sha=$SHA&per_page=20" \
+              --jq '[.[] | select((.environment | test("^Production")) and .creator.login == "vercel[bot]")][0].id // empty')
+            if [ -n "$dep" ]; then
+              state=$(gh api "repos/$REPO/deployments/$dep/statuses" --jq '.[0].state // "pending"')
+              url=$(gh api "repos/$REPO/deployments/$dep/statuses" --jq '.[0].environment_url // ""')
+              echo "deployment $dep: $state $url"
+              case "$state" in
+                success) echo "url=$url" >> "$GITHUB_OUTPUT"; break;;
+                failure|error) echo "::error::Vercel production build failed for ${SHA:0:7}"; exit 1;;
+              esac
+            fi
+            [ "$(date +%s)" -gt "$deadline" ] && { echo "::error::no successful production deploy after ${{ inputs.deploy-timeout-minutes }} min"; exit 1; }
+            sleep 20
+          done
+
+      - name: Smoke
+        id: smoke
+        run: |
+          set -uo pipefail
+          for i in 1 2 3 4 5 6; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -L --max-redirs 0 "${{ inputs.smoke-url }}" || echo 000)
+            echo "try $i: ${{ inputs.smoke-url }} → $code"
+            case "$code" in 2*|3*) echo "✅ ${{ inputs.smoke-url }} answered $code" >> "$GITHUB_STEP_SUMMARY"; exit 0;; esac
+            sleep 10
+          done
+          echo "::error::${{ inputs.smoke-url }} did not answer 2xx/3xx"
+          exit 1
+
+      - name: Roll back
+        if: failure() && steps.smoke.outcome == 'failure' && inputs.vercel-project != ''
+        run: |
+          set -uo pipefail
+          if [ -z "${VERCEL_TOKEN:-}" ]; then
+            echo "::error::Smoke failed and VERCEL_TOKEN is not set, so production was NOT rolled back. Roll back in Vercel now."
+            exit 1
+          fi
+          team=${VERCEL_ORG_ID:-team_CcAww6BxbtTBU2RrjwxlzagN}
+          proj=$(curl -sf -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v9/projects/${{ inputs.vercel-project }}?teamId=$team" | jq -r .id)
+          prev=$(curl -sf -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v6/deployments?projectId=$proj&target=production&state=READY&limit=10&teamId=$team" \
+            | jq -r --arg sha "$SHA" '[.deployments[] | select(.meta.githubCommitSha != $sha)][0].uid // empty')
+          if [ -z "$prev" ]; then echo "::error::Smoke failed and no previous production deployment was found. Roll back in Vercel now."; exit 1; fi
+          curl -sf -X POST -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v9/projects/$proj/rollback/$prev?teamId=$team" >/dev/null \
+            || { echo "::error::Rollback call failed. Roll back in Vercel now."; exit 1; }
+          echo "rolled back to $prev"
+          echo "⏪ Smoke failed: production rolled back to the previous deployment. main still points at ${SHA:0:7}; fix forward on staging." >> "$GITHUB_STEP_SUMMARY"
+          exit 1
