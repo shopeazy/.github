@@ -28,6 +28,14 @@
 #   verify   (when smoke-url is set) waits for Vercel's production deployment of
 #            that commit, then requests smoke-url. A failure rolls production
 #            back to the previous deployment when VERCEL_TOKEN is available.
+#
+# Outputs `from` (main before) and `sha` (main after), so a caller can run its
+# own deploys for what changed, e.g. the console's Firebase deploy:
+#
+#   firebase:
+#     needs: promote
+#     uses: ./.github/workflows/firebase-deploy.yml
+#     with: { project: production, base: '${{ needs.promote.outputs.from }}', head: '${{ needs.promote.outputs.sha }}' }
 name: Promote
 
 on:
@@ -48,6 +56,13 @@ on:
       deploy-timeout-minutes:
         type: number
         default: 20
+    outputs:
+      sha:
+        description: The commit main now points at.
+        value: ${{ jobs.check.outputs.sha }}
+      from:
+        description: Where main pointed before. Equal to sha when there was nothing to promote.
+        value: ${{ jobs.check.outputs.from }}
     secrets:
       VERCEL_TOKEN:
         required: false
