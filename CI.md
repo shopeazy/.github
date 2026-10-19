@@ -28,6 +28,17 @@ feature branch ──PR──▶ staging ──Promote──▶ main
 
 Each repo has a thin `.github/workflows/ci.yml` that calls these with `@main`, plus `.github/dependabot.yml`.
 
+## Runners (Google Cloud)
+
+Every job in `node-ci.yml`, `security.yml`, `brand.yml` and the console's `e2e.yml` runs on `${{ vars.CI_RUNNER || 'ubuntu-latest' }}`.
+
+- `CI_RUNNER=shopeazy-gcp` (a repo variable) sends the job to a fresh VM in the `shopeazy-ci` Google Cloud project (africa-south1, next to staging Firestore): e2-standard-4 spot (4 vCPU / 16 GB), on-demand when spot is out, one job per VM, deleted after. About $0.0009 a minute against $0.006 hosted. Code: [shopeazy/shopeazy-ci-runners](https://github.com/shopeazy/shopeazy-ci-runners).
+- How: the **ShopEazy CI runners** GitHub App sends `workflow_job` webhooks to the `ci-launcher` Cloud Run service, which mints a single-use just-in-time runner and starts the VM; a reconcile every 5 minutes re-launches anything missed and deletes leftovers.
+- **Fallback:** `gh variable delete CI_RUNNER -R shopeazy/<repo>` puts that repo back on GitHub-hosted runners at once. `gh variable set CI_RUNNER -b shopeazy-gcp -R shopeazy/<repo>` moves it back.
+- Promote and the console's Firebase deploy stay on hosted runners (they touch production).
+- Only private repos may use the runners (default runner group, public repos off).
+- **Console e2e runs once per PR:** the build on every push, the full suite when the PR is marked ready for review or gets the `e2e` label (and on later pushes while the label stays on), plus weekly and manual runs.
+
 ## Secrets each repo needs
 
 | Secret | Where | Why |
@@ -41,7 +52,7 @@ Each repo has a thin `.github/workflows/ci.yml` that calls these with `@main`, p
 
 - Required status checks and environment approvals need **GitHub Team** on private repos. Until then the checks report but cannot block a merge.
 - Organisation secrets are not visible to private repos on Free, so secrets are set per repo.
-- Private repos get 2,000 Actions minutes a month and 2-core / 7 GB runners.
+- Private repos get 2,000 Actions minutes a month and 2-core / 7 GB hosted runners; with `CI_RUNNER` set, only Promote and Firebase deploys use them.
 - `actions/dependency-review-action` needs Advanced Security on private repos, so `security.yml` uses `npm audit` instead.
 
 ## Required checks
