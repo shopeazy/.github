@@ -8,7 +8,7 @@
 **South Africa's boldest e-commerce platform.**  
 Launch your online store, accept payments, and ship nationwide — all from one place.
 
-[![Website](https://img.shields.io/badge/🌐_Website-shopeazy.co.za-101935?style=for-the-badge)](https://www.shopeazy.co.za)
+[![Website](https://img.shields.io/badge/🌐_Website-shopeazy.co.-101935?style=for-the-badge)](https://www.shopeazy.co.za)
 [![Platform](https://img.shields.io/badge/Platform-Next.js_/_TypeScript-FF5275?style=for-the-badge&logo=next.js&logoColor=white)](https://github.com/shopeazy/shopeazy-website-final)
 [![Made in SA](https://img.shields.io/badge/Made_in-🇿🇦_South_Africa-FFA62B?style=for-the-badge)](https://www.shopeazy.co.za/about)
 
