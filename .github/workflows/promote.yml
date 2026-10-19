@@ -82,7 +82,7 @@ concurrency:
 jobs:
   check:
     name: Ready to promote?
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     outputs:
       sha: ${{ steps.pick.outputs.sha }}
       from: ${{ steps.pick.outputs.from }}
@@ -149,7 +149,7 @@ jobs:
   promote:
     name: Move main
     needs: check
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     environment: promote
     env:
       GH_TOKEN: ${{ github.token }}
@@ -167,7 +167,7 @@ jobs:
     name: Production smoke
     needs: [check, promote]
     if: inputs.smoke-url != ''
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
