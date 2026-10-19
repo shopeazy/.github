@@ -73,13 +73,14 @@ permissions:
 env:
   REPO_DIR: ${{ github.event.repository.name }}
   NEXT_TELEMETRY_DISABLED: '1'
-  # Private repos get 2-core / 7 GB runners; give Node most of it.
+  # Hosted private-repo runners are 2-core / 7 GB; the GCP ones 4-core / 16 GB.
+  # 6 GB fits both.
   NODE_OPTIONS: --max-old-space-size=6144
 
 jobs:
   verify:
     name: Lint · types · unit
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     defaults:
       run:
@@ -176,7 +177,7 @@ jobs:
   build:
     name: Build
     if: inputs.build != ''
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     defaults:
       run:
