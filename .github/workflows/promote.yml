@@ -74,6 +74,7 @@ permissions:
   checks: read
   statuses: read
   deployments: read
+  actions: read
 
 concurrency:
   group: promote-${{ github.repository }}
