@@ -82,7 +82,7 @@ concurrency:
 jobs:
   check:
     name: Ready to promote?
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.pick.outputs.sha }}
       from: ${{ steps.pick.outputs.from }}
@@ -128,9 +128,17 @@ jobs:
           SHA: ${{ steps.pick.outputs.sha }}
         run: |
           set -euo pipefail
-          # Check runs (Actions jobs, Vercel). This promote run itself is excluded.
+          # Check runs (Actions jobs, Vercel). This promote run itself is excluded,
+          # and so are runs of a repo's e2e.yml started by schedule or by hand
+          # (a nightly full suite): the Promote's own smoke run is the gate, so a
+          # red nightly cannot block it.
+          nightly=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
+            --jq '[.workflow_runs[] | select(.path == ".github/workflows/e2e.yml" and (.event == "schedule" or .event == "workflow_dispatch")) | .id | tostring] | join("|")')
           runs=$(gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" --paginate \
-            --jq '.check_runs[] | select(.name | test("^(promote|Ready to promote|Promote|Production)") | not) | "\(.status)|\(.conclusion)|\(.name)"')
+            | jq -r --arg nightly "${nightly:-none}" '.check_runs[]
+                | select(.name | test("^(promote|Ready to promote|Promote|Production)") | not)
+                | select((.details_url // "") | test("/actions/runs/(" + $nightly + ")/") | not)
+                | "\(.status)|\(.conclusion)|\(.name)"')
           statuses=$(gh api "repos/$REPO/commits/$SHA/status" --jq '.statuses[] | "\(.state)|\(.context)"')
           echo "$runs"; echo "$statuses"
           bad=0
@@ -149,7 +157,7 @@ jobs:
   promote:
     name: Move main
     needs: check
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     environment: promote
     env:
       GH_TOKEN: ${{ github.token }}
@@ -167,7 +175,7 @@ jobs:
     name: Production smoke
     needs: [check, promote]
     if: inputs.smoke-url != ''
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}

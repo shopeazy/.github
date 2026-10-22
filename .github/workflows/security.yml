@@ -27,7 +27,7 @@ permissions:
 jobs:
   secrets:
     name: Secret scan
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -58,7 +58,7 @@ jobs:
   deps:
     name: New vulnerable dependencies
     if: github.event_name == 'pull_request' && inputs.lockfile-dir != 'none'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
