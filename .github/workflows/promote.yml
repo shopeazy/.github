@@ -129,12 +129,12 @@ jobs:
           SHA: ${{ steps.pick.outputs.sha }}
         run: |
           set -euo pipefail
-          # Check runs (Actions jobs, Vercel). This promote run itself is excluded,
-          # and so are runs of a repo's e2e.yml started by schedule or by hand
-          # (a nightly full suite): the Promote's own smoke run is the gate, so a
-          # red nightly cannot block it.
+          # Check runs (Actions jobs, Vercel). Excluded: every run of the
+          # caller's promote.yml (this one gates its own checks and e2e through
+          # `needs`, and an earlier failed attempt must not block a retry), and
+          # runs of a repo's e2e.yml started by schedule or by hand.
           nightly=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
-            --jq '[.workflow_runs[] | select(.path == ".github/workflows/e2e.yml" and (.event == "schedule" or .event == "workflow_dispatch")) | .id | tostring] | join("|")')
+            --jq '[.workflow_runs[] | select(.path == ".github/workflows/promote.yml" or (.path == ".github/workflows/e2e.yml" and (.event == "schedule" or .event == "workflow_dispatch"))) | .id | tostring] | join("|")')
           runs=$(gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" --paginate \
             | jq -r --arg nightly "${nightly:-none}" '.check_runs[]
                 | select(.name | test("^(promote|Ready to promote|Promote|Production)") | not)
