@@ -11,7 +11,7 @@
 #       with:
 #         surface: product   # marketing | product | api | tooling
 #
-# Warn-only until 2026-10-25, then `mode: block`. A PR labelled `brand-override` always passes.
+# Blocking since 2026-10-25: every caller passes `mode: block`. A PR labelled `brand-override` always passes.
 name: Brand check
 
 on:
